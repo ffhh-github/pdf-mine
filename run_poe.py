@@ -1,90 +1,83 @@
-#!/usr/bin/env python3
 import os
-import sys
+import docx
 import requests
-from docx import Document
-import json
 
-# === YOUR POE API KEY ===
-POE_API_KEY = "UZkBIjfV7DWCDbEar0r6QvMTERL1v88hi2sOR6YoxQ"
+# === CONFIGURATION ===
+# Insert your API keys here as environment variables or directly in the script
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-openai-key")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "your-claude-key")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY", "your-cohere-key")
 
-# === Model map (add/remove as needed) ===
-MODELS = {
-    "Claude":   "claude-3-5-sonnet",
-    "ChatGPT":  "gpt-4o",
-    "Gemini":   "gemini-1.5-pro",
-    "Llama":    "llama-3-70b-instruct",
-    "Mixtral":  "mixtral-8x22b",
-    # Full list: https://poe.com/api/models
-}
+# === HELPER: Load .docx prompt ===
+def load_docx(filename):
+    doc = docx.Document(filename)
+    text = []
+    for para in doc.paragraphs:
+        text.append(para.text)
+    return "\n".join(text)
 
-# Poe Official API
-BASE_URL = "https://api.poe.com/v1/chat/completions"
-
-def get_response(model_name, prompt):
-    if not POE_API_KEY:
-        return "Error: API key missing."
-    
-    headers = {
-        "Authorization": f"Bearer {POE_API_KEY}",
-        "Content-Type": "application/json"
-    }
+# === AI QUERIES ===
+def query_openai(prompt):
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     data = {
-        "model": model_name,
+        "model": "gpt-4o-mini",  # try gpt-4o or gpt-3.5-turbo if needed
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 4096,
-        "temperature": 0.7
     }
-    
-    try:
-        response = requests.post(BASE_URL, headers=headers, json=data, timeout=60)
-        response.raise_for_status()
-        result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    except requests.exceptions.RequestException as e:
-        return f"Network Error: {str(e)[:100]}"
-    except Exception as e:
-        return f"API Error: {str(e)}"
+    resp = requests.post(url, headers=headers, json=data)
+    result = resp.json()
 
+    if "error" in result:
+        return f"OpenAI API error: {result['error']['message']}"
+    elif "choices" in result:
+        return result["choices"][0]["message"]["content"]
+    else:
+        return f"Unexpected response: {result}"
+
+def query_claude(prompt):
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {"x-api-key": ANTHROPIC_API_KEY, "Content-Type": "application/json"}
+    data = {
+        "model": "claude-3-haiku-20240307",  # or claude-3-opus if available
+        "max_tokens": 500,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    resp = requests.post(url, headers=headers, json=data)
+    result = resp.json()
+
+    if "error" in result:
+        return f"Claude API error: {result['error']['message']}"
+    elif "content" in result:
+        return result["content"][0]["text"]
+    else:
+        return f"Unexpected response: {result}"
+
+def query_cohere(prompt):
+    url = "https://api.cohere.ai/v1/chat"
+    headers = {"Authorization": f"Bearer {COHERE_API_KEY}"}
+    data = {"model": "command-r", "message": prompt}
+    resp = requests.post(url, headers=headers, json=data)
+    result = resp.json()
+
+    if "error" in result:
+        return f"Cohere API error: {result['error']['message']}"
+    elif "text" in result:
+        return result["text"]
+    else:
+        return f"Unexpected response: {result}"
+
+# === MAIN ===
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 run_poe.py <your_document.docx>")
-        sys.exit(1)
+    prompt = load_docx("My AI Prompt.docx")
+    print("Prompt loaded from My AI Prompt.docx\n")
 
-    doc_path = sys.argv[1]
-    doc = Document(doc_path)
-    text = "\n".join(p.text for p in doc.paragraphs)
-
-    # Extract [A] and [AI] sections
-    try:
-        prompt = text.split("[A]")[1].split("[/A]")[0].strip()
-        ai_names = [l.strip() for l in text.split("[AI]")[1].split("[/AI]")[0].split("\n") if l.strip()]
-    except Exception:
-        print("Error: Missing [A]...[/A] or [AI]...[/AI] in document")
-        sys.exit(1)
-
-    print(f"Running {len(ai_names)} models...")
-    responses = {}
-    for name in ai_names:
-        model = MODELS.get(name)
-        if not model:
-            responses[name] = "Model not in MODELS"
-            print(f"{name}: skipped")
-            continue
-        print(f"{name}...", end=" ", flush=True)
-        responses[name] = get_response(model, prompt)
-        print("Done")
-
-    # Write results after [B]
-    output = "\n\n[B]\n"
-    for n, r in responses.items():
-        output += f"{n}:\n{r}\n\n---\n\n"
-
-    doc = Document(doc_path)
-    doc.add_paragraph(output)
-    doc.save(doc_path)
-
-    print(f"\nSuccess! Open: {doc_path}")
+    print("=== OpenAI (ChatGPT) Response ===")
+    print(query_openai(prompt))
+    print("\n=== Anthropic (Claude) Response ===")
+    print(query_claude(prompt))
+    print("\n=== Cohere Response ===")
+    print(query_cohere(prompt))
 
 if __name__ == "__main__":
     main()
+
